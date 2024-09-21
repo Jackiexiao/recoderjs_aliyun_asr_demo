@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" />
+  <title>Recorder.js + 阿里云语音识别演示</title>
+  <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js"></script>
+  <script src="src/recorder-core.js"></script>
+  <script src="src/engine/mp3.js"></script>
+  <script src="src/engine/mp3-engine.js"></script>
+  <script src="src/extensions/asr.aliyun.short.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+
+    .mainBox {
+      border: 1px solid #ddd;
+      padding: 10px;
+      margin-bottom: 20px;
+    }
+
+    button {
+      margin: 5px;
+    }
+
+    .recAsrTxt {
+      min-height: 50px;
+      border: 1px solid #ccc;
+      padding: 10px;
+      margin-top: 10px;
+    }
+
+    .recBlobAsrTxt {
+      min-height: 50px;
+      border: 1px solid #ccc;
+      padding: 10px;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="mainBox">
+    <h2>实时语音识别</h2>
+    <div>
+      <input class="asrTokenApi" value="http://127.0.0.1:9527/token" placeholder="请填写api地址 或 token的json数据"
+        style="width: 300px" />
+    </div>
+    <div>
+      <button onclick="asrStartClick()">开始录音+识别</button>
+      <button onclick="asrStopClick()">结束语音识别</button>
+    </div>
+    <div class="recAsrStatus"></div>
+    <div class="recAsrTxt"></div>
+  </div>
+
+  <div class="mainBox">
+    <h2>音频文件转文字</h2>
+    <button onclick="asrLastRecBlobToText()">将当前录音识别成文本</button>
+    <div class="recBlobAsrTxt"></div>
+  </div>
+
+  <script>
+    var rec, asr;
+    var recBlob;
+    var recReady = false;
+    var isRecording = false; // 新增：用于跟踪录音状态
+
+    function initRecorder() {
+      if (!rec) {
+        rec = Recorder({
+          type: "mp3",
+          sampleRate: 16000,
+          bitRate: 16,
+          onProcess: function (
+            buffers,
+            powerLevel,
+            duration,
+            sampleRate,
+            newBufferIdx,
+            asyncEnd
+          ) {
+            $(".recAsrStatus").text("正在录音...");
+            asrInput(buffers, sampleRate, newBufferIdx);
+          },
+        });
+
+        rec.open(
+          function () {
+            recReady = true;
+            console.log("Recorder is ready");
+            asrStartClick();
+          },
+          function (msg) {
+            alert("无法录音：" + msg);
+          }
+        );
+      } else if (recReady) {
+        asrStartClick();
+      }
+    }
+
+    function asrStartClick() {
+      if (isRecording) {
+        alert("录音已经开始，请先停止");
+        return;
+      }
+
+      if (!recReady) {
+        console.log("Initializing recorder...");
+        initRecorder();
+        return;
+      }
+
+      console.log("Starting recording...");
+      rec.start();
+      isRecording = true;
+      $(".recAsrStatus").text("录音已开始");
+      startASR();
+    }
+
+    function startASR() {
+      var url = $(".asrTokenApi").val();
+      var urlReq = null;
+      if (/^\s*\{.*\}\s*$/.test(url)) {
+        urlReq = function (url, args, success, fail) {
+          var data;
+          try {
+            data = JSON.parse(url);
+          } catch (e) { }
+          if (!data || !data.appkey || !data.token) {
+            fail(
+              "填写的json数据" + (!data ? "解析失败" : "中缺少appkey或token")
+            );
+          } else {
+            success({ appkey: data.appkey, token: data.token });
+          }
+        };
+      }
+
+      asr = Recorder.ASR_Aliyun_Short({
+        tokenApi: url,
+        apiArgs: {
+          lang: "普通话",
+        },
+        apiRequest: urlReq,
+        asrProcess: function (text, nextDuration) {
+          $(".recAsrTxt").text(text);
+          return nextDuration <= 2 * 60 * 1000;
+        },
+      });
+
+      asr.start(
+        function () {
+          $(".recAsrStatus").text("语音识别已开始");
+        },
+        function (err) {
+          $(".recAsrStatus").text("语音识别开始失败：" + err);
+        }
+      );
+    }
+
+    function asrInput(buffers, sampleRate, offset) {
+      if (asr) {
+        asr.input(buffers, sampleRate, offset);
+      }
+    }
+
+    function asrStopClick() {
+      console.log("Stopping recording...");
+      console.log("isRecording:", isRecording);
+      console.log("rec state:", rec ? rec.state : "rec is null");
+
+      if (!isRecording) {
+        alert("当前未在录音");
+        return;
+      }
+
+      if (!rec) {
+        alert("录音器未初始化");
+        return;
+      }
+
+      rec.stop(function (blob, duration) {
+        recBlob = blob;
+        isRecording = false;
+        $(".recAsrStatus").text("录音已停止，正在进行语音识别...");
+
+        if (asr) {
+          asr.stop(
+            function (text) {
+              $(".recAsrStatus").text("语音识别已结束");
+              $(".recAsrTxt").text("最终识别结果：" + text);
+            },
+            function (err) {
+              $(".recAsrStatus").text("语音识别结束失败：" + err);
+            }
+          );
+        } else {
+          $(".recAsrStatus").text("语音识别未初始化");
+        }
+      }, function (err) {
+        alert("停止录音失败: " + err);
+        isRecording = false; // 即使失败也重置录音状态
+      });
+    }
+
+    function asrLastRecBlobToText() {
+      if (!recBlob) {
+        alert("没有可用的录音");
+        return;
+      }
+
+      var url = $(".asrTokenApi").val();
+      var urlReq = null;
+      if (/^\s*\{.*\}\s*$/.test(url)) {
+        urlReq = function (url, args, success, fail) {
+          var data;
+          try {
+            data = JSON.parse(url);
+          } catch (e) { }
+          if (!data || !data.appkey || !data.token) {
+            fail(
+              "填写的json数据" + (!data ? "解析失败" : "中缺少appkey或token")
+            );
+          } else {
+            success({ appkey: data.appkey, token: data.token });
+          }
+        };
+      }
+
+      var asr = Recorder.ASR_Aliyun_Short({
+        tokenApi: url,
+        apiArgs: {
+          lang: "普通话",
+        },
+        apiRequest: urlReq,
+      });
+
+      asr.audioToText(
+        recBlob,
+        function (text) {
+          $(".recBlobAsrTxt").text("文件识别结果：" + text);
+        },
+        function (err) {
+          $(".recBlobAsrTxt").text("文件识别失败：" + err);
+        }
+      );
+    }
+  </script>
+</body>
+
+</html>
