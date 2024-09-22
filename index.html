@@ -192,8 +192,9 @@
         if (asr) {
           asr.stop(
             function (text) {
-              $(".recAsrStatus").text("语音识别已结束");
-              $(".recAsrTxt").text("最终识别结果：" + text);
+              $(".recAsrStatus").text("语音识别已结束，正在润色文本...");
+              $(".recAsrTxt").text("识别结果：" + text);
+              polishText(text);
             },
             function (err) {
               $(".recAsrStatus").text("语音识别结束失败：" + err);
@@ -205,6 +206,25 @@
       }, function (err) {
         alert("停止录音失败: " + err);
         isRecording = false; // 即使失败也重置录音状态
+      });
+    }
+
+    function polishText(text) {
+      $.ajax({
+        url: "http://127.0.0.1:9527/polish", // TODO
+        method: "POST",
+        data: { text: text },
+        success: function (response) {
+          if (response.c === 0) {
+            $(".recAsrStatus").text("文本润色完成");
+            $(".recAsrTxt").append("<br><br>润色后的文本：" + response.v.polished_text);
+          } else {
+            $(".recAsrStatus").text("文本润色失败：" + response.m);
+          }
+        },
+        error: function (xhr, status, error) {
+          $(".recAsrStatus").text("文本润色请求失败：" + error);
+        }
       });
     }
 

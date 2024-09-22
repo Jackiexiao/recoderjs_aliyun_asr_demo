@@ -1,2 +1,5 @@
 .env
 .vscode/
+temp/
+temp.*
+server.js
